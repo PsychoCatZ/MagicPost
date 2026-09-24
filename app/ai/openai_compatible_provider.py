@@ -5,13 +5,25 @@ from openai import AsyncOpenAI
 from app.ai.base import AIError, AIProvider, AIResult, AIUsage
 
 
-class OpenAIProvider(AIProvider):
-    name = "openai"
+class OpenAICompatibleProvider(AIProvider):
+    """Works with OpenAI itself and with any OpenAI-compatible chat
+    completions API (DeepSeek, Alibaba Qwen/DashScope, and similar) — only
+    `base_url` and `model` differ between them, the request/response shape
+    is identical, so one class covers all of them.
+    """
 
-    def __init__(self, api_key: str | None, model: str):
+    def __init__(
+        self,
+        *,
+        name: str,
+        api_key: str | None,
+        model: str,
+        base_url: str | None = None,
+    ):
         if not api_key:
-            raise AIError("OPENAI_API_KEY не задан в .env")
-        self._client = AsyncOpenAI(api_key=api_key)
+            raise AIError(f"API-ключ для провайдера {name!r} не задан в .env")
+        self.name = name
+        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         self._model = model
 
     async def generate_text(
@@ -27,12 +39,12 @@ class OpenAIProvider(AIProvider):
                 temperature=temperature,
             )
         except Exception as exc:  # SDK raises several distinct error types
-            raise AIError(f"Ошибка OpenAI API: {exc}") from exc
+            raise AIError(f"Ошибка API провайдера {self.name}: {exc}") from exc
 
         choice = response.choices[0] if response.choices else None
         text = (choice.message.content or "").strip() if choice else ""
         if not text:
-            raise AIError("OpenAI вернул пустой ответ")
+            raise AIError(f"Провайдер {self.name} вернул пустой ответ")
 
         usage = None
         if response.usage:

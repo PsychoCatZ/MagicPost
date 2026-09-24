@@ -42,6 +42,9 @@ class Settings:
     ai_model: str
     openai_api_key: str | None
     deepseek_api_key: str | None
+    qwen_api_key: str | None
+    site_news_api_url: str | None
+    site_news_api_key: str | None
 
 
 def load_settings() -> Settings:
@@ -56,6 +59,9 @@ def load_settings() -> Settings:
         ai_model=os.getenv("AI_MODEL", "gpt-4o-mini"),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         deepseek_api_key=os.getenv("DEEPSEEK_API_KEY"),
+        qwen_api_key=os.getenv("QWEN_API_KEY"),
+        site_news_api_url=os.getenv("SITE_NEWS_API_URL"),
+        site_news_api_key=os.getenv("SITE_NEWS_API_KEY"),
     )
 
 

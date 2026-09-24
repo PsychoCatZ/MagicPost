@@ -27,7 +27,7 @@ app/
 ├── ai/                       # слой ИИ — единственное место, знающее о конкретном провайдере
 │   ├── base.py               # AIProvider (интерфейс), AIResult, AIError
 │   ├── factory.py             # get_provider(settings) — выбор провайдера по AI_PROVIDER
-│   ├── openai_provider.py     # реализация под OpenAI
+│   ├── openai_compatible_provider.py  # реализация под OpenAI/DeepSeek/Qwen
 │   ├── prompts.py             # загрузка шаблонов из app/prompts/*.txt
 │   └── content_service.py     # бизнес-операции (пост/тезисы/рерайт/идеи/план),
 │                               # не зависящие от конкретного провайдера
@@ -70,24 +70,43 @@ async def generate_text(self, *, system_prompt: str, user_prompt: str, temperatu
 Именно `ContentService`, а не провайдер, знает про промпты — так тюнинг
 промптов и смена SDK-провайдера — это две независимые вещи.
 
-**Чтобы добавить нового провайдера (например, DeepSeek):**
+Уже готовы три провайдера — переключаются одной строкой в `.env`, без
+изменений кода:
 
-1. Создать `app/ai/deepseek_provider.py` с классом `DeepSeekProvider(AIProvider)`,
+| `AI_PROVIDER` | Нужен ключ | `AI_MODEL`, например |
+|---|---|---|
+| `openai` | `OPENAI_API_KEY` | `gpt-4o-mini` |
+| `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-flash` |
+| `qwen` | `QWEN_API_KEY` | `qwen3.5-flash` |
+
+DeepSeek и Alibaba Qwen (через DashScope) оба реализуют тот же протокол
+chat-completions, что и OpenAI, поэтому все три работают через один класс —
+`OpenAICompatibleProvider` (`app/ai/openai_compatible_provider.py`), у
+которого просто разный `base_url` и ключ. Отдельный класс на каждого
+провайдера не нужен.
+
+**Чтобы добавить провайдера, который НЕ совместим с OpenAI API** (например,
+Claude или Gemini с их собственным форматом запроса):
+
+1. Создать `app/ai/<name>_provider.py` с классом `<Name>Provider(AIProvider)`,
    реализующим `generate_text(...)`.
 2. Добавить веточку в `app/ai/factory.py`:
    ```python
-   if provider_name == "deepseek":
-       from app.ai.deepseek_provider import DeepSeekProvider
-       return DeepSeekProvider(api_key=settings.deepseek_api_key, model=settings.ai_model)
+   if provider_name == "claude":
+       from app.ai.claude_provider import ClaudeProvider
+       return ClaudeProvider(api_key=settings.claude_api_key, model=settings.ai_model)
    ```
-3. В `.env` поставить `AI_PROVIDER=deepseek`, `DEEPSEEK_API_KEY=...`, `AI_MODEL=...`.
+3. Добавить `claude_api_key` в `Settings`/`load_settings()` (`app/config.py`)
+   и `CLAUDE_API_KEY=` в `.env`.
 
 Больше никакие файлы (handlers, keyboards, database, scheduler) менять не нужно.
 
 ### Как сменить модель
 
-Просто поменять `AI_MODEL` в `.env` (например, `gpt-4o` вместо `gpt-4o-mini`)
-и перезапустить бота. Модель нигде не захардкожена в коде.
+Просто поменять `AI_MODEL` в `.env` (например, `gpt-4o` вместо `gpt-4o-mini`,
+или `deepseek-v4-pro` вместо `deepseek-flash`) и перезапустить бота. Модель
+нигде не захардкожена в коде. Учтите: при смене `AI_PROVIDER` модель нужно
+сменить тоже — имена моделей у провайдеров не совпадают.
 
 ### Устройство промптов
 
@@ -135,6 +154,17 @@ completion_tokens, total_tokens, created_at`. Пишется на каждый �
 выключен в момент публикации), либо ставит задачу на будущее время. Поэтому
 перезапуск бота не теряет запланированные публикации.
 
+### Уведомление сайта о публикации
+
+Если заданы `SITE_NEWS_API_URL` и `SITE_NEWS_API_KEY`, после каждой успешной
+публикации в Telegram (`app/services/publishing.py`) бот дополнительно
+отправляет `POST` с текстом и темой поста на этот адрес — так пост попадает
+и в ленту новостей на сайте. Это сайд-эффект публикации, а не её условие:
+если сайт недоступен, вернул ошибку или переменные не заданы, публикация в
+Telegram всё равно проходит, а сбой только логируется. Работает для обоих
+сценариев публикации (сразу и по расписанию), поскольку оба идут через одну
+и ту же функцию `publish_post()`.
+
 ### Доступ
 
 Все функции бота доступны только `OWNER_TELEGRAM_ID` — это проверяется в
@@ -167,9 +197,13 @@ completion_tokens, total_tokens, created_at`. Пишется на каждый �
    | `APP_TIMEZONE` | часовой пояс для расписания, например `Asia/Krasnoyarsk` |
    | `DATABASE_PATH` | путь к файлу SQLite, по умолчанию `data/bot.db` |
    | `AUTHOR_NAME` | имя автора публикаций (используется в промптах) |
-   | `AI_PROVIDER` | `openai` (сейчас единственный готовый провайдер) |
-   | `OPENAI_API_KEY` | ключ OpenAI API |
-   | `AI_MODEL` | модель, например `gpt-4o-mini` |
+   | `AI_PROVIDER` | `openai`, `deepseek` или `qwen` |
+   | `OPENAI_API_KEY` | ключ OpenAI API (нужен при `AI_PROVIDER=openai`) |
+   | `DEEPSEEK_API_KEY` | ключ DeepSeek API (нужен при `AI_PROVIDER=deepseek`) |
+   | `QWEN_API_KEY` | ключ Alibaba Qwen / DashScope (нужен при `AI_PROVIDER=qwen`) |
+   | `AI_MODEL` | модель выбранного провайдера, например `gpt-4o-mini` / `deepseek-flash` / `qwen3.5-flash` |
+   | `SITE_NEWS_API_URL` | необязательно — URL эндпоинта сайта для публикации новости (`/api/news`) |
+   | `SITE_NEWS_API_KEY` | необязательно — ключ для авторизации запроса к этому эндпоинту |
 
 ## Права бота в Telegram-канале
 
