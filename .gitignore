@@ -18,7 +18,11 @@ env/
 
 # OS / editor temp files
 *.tmp
+*.tmp.*
 *.temp
+
+# Local Claude Code settings/worktrees
+.claude/
 *.swp
 .DS_Store
 Thumbs.db
