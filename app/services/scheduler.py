@@ -54,8 +54,15 @@ class PostScheduler:
 
     async def _run_publish(self, post_id: int) -> None:
         try:
-            await publish_post(self._bot, post_id)
-            logger.info("Запланированный пост %s опубликован по расписанию", post_id)
+            failed = await publish_post(self._bot, post_id)
+            if failed:
+                logger.warning(
+                    "Запланированный пост %s опубликован не везде (сбой: %s), возвращён в черновики",
+                    post_id,
+                    ", ".join(failed),
+                )
+            else:
+                logger.info("Запланированный пост %s опубликован по расписанию", post_id)
         except PublishError:
             logger.exception("Ошибка публикации запланированного поста %s", post_id)
 

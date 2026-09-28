@@ -99,12 +99,13 @@ def set_status(post_id: int, status: str) -> Optional[Post]:
     return get_post(post_id)
 
 
-def set_scheduled(post_id: int, scheduled_at_iso: str) -> Optional[Post]:
+def set_scheduled(post_id: int, scheduled_at_iso: str, targets: str) -> Optional[Post]:
     conn = get_connection()
     try:
         conn.execute(
-            "UPDATE posts SET status = 'scheduled', scheduled_at = ?, updated_at = ? WHERE id = ?",
-            (scheduled_at_iso, _now(), post_id),
+            """UPDATE posts SET status = 'scheduled', scheduled_at = ?, publish_targets = ?,
+               updated_at = ? WHERE id = ?""",
+            (scheduled_at_iso, targets, _now(), post_id),
         )
         conn.commit()
     finally:

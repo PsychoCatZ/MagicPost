@@ -17,61 +17,85 @@ logger = logging.getLogger(__name__)
 PHOTO_CAPTION_LIMIT = 1024
 SITE_NOTIFY_TIMEOUT = 10.0
 
+TARGET_CHANNEL = "channel"
+TARGET_SITE = "site"
+TARGET_BOTH = "both"
+VALID_TARGETS = (TARGET_CHANNEL, TARGET_SITE, TARGET_BOTH)
+
 
 class PublishError(RuntimeError):
-    """Raised when a post could not be sent to the channel."""
+    """Raised when a post could not be published to any of the requested targets."""
 
 
-async def _notify_website(post: Post) -> None:
-    """Best-effort push of a published post to the site's news feed.
+async def _send_to_site(post: Post) -> None:
+    async with httpx.AsyncClient(timeout=SITE_NOTIFY_TIMEOUT) as client:
+        response = await client.post(
+            settings.site_news_api_url,
+            headers={"Authorization": f"Bearer {settings.site_news_api_key}"},
+            json={"text": post.display_text, "topic": post.topic},
+        )
+        response.raise_for_status()
 
-    Site notification is a side effect of Telegram publishing, never a
-    precondition for it — any failure here (site down, wrong key, network
-    error, non-2xx response) is logged and swallowed, not raised.
+
+async def _send_to_channel(bot: Bot, post: Post, text: str) -> None:
+    chat_id = settings.target_channel_id
+    if post.image_file_id:
+        if len(text) <= PHOTO_CAPTION_LIMIT:
+            await bot.send_photo(chat_id, photo=post.image_file_id, caption=text, parse_mode="HTML")
+        else:
+            await bot.send_photo(chat_id, photo=post.image_file_id)
+            await bot.send_message(chat_id, text=text, parse_mode="HTML")
+    else:
+        await bot.send_message(chat_id, text=text, parse_mode="HTML")
+
+
+async def publish_post(bot: Bot, post_id: int, targets: str | None = None) -> list[str]:
+    """Publishes a post to the channel, the site, or both.
+
+    Returns the targets that failed after another target already succeeded
+    (only possible for 'both': channel ok, site failed). In that case the post
+    goes back to 'draft' so it can be re-sent to the failed target alone.
+    Raises PublishError when nothing was published.
     """
-    if not settings.site_news_api_url or not settings.site_news_api_key:
-        return
-    try:
-        async with httpx.AsyncClient(timeout=SITE_NOTIFY_TIMEOUT) as client:
-            response = await client.post(
-                settings.site_news_api_url,
-                headers={"Authorization": f"Bearer {settings.site_news_api_key}"},
-                json={"text": post.display_text, "topic": post.topic},
-            )
-            response.raise_for_status()
-    except Exception:
-        logger.exception("Не удалось отправить пост %s на сайт", post.id)
-        return
-    logger.info("Пост %s отправлен на сайт", post.id)
-
-
-async def publish_post(bot: Bot, post_id: int) -> None:
     post = await run_sync(repository.get_post, post_id)
     if post is None:
         raise PublishError("Пост не найден")
 
+    targets = targets or post.targets
+    if targets not in VALID_TARGETS:
+        raise PublishError(f"Неизвестное назначение публикации: {targets}")
+
     if not post.display_text.strip():
         raise PublishError("Текст поста пуст")
-    text = markdown_to_html(post.display_text)
 
-    chat_id = settings.target_channel_id
-    try:
-        if post.image_file_id:
-            if len(text) <= PHOTO_CAPTION_LIMIT:
-                await bot.send_photo(
-                    chat_id, photo=post.image_file_id, caption=text, parse_mode="HTML"
-                )
-            else:
-                await bot.send_photo(chat_id, photo=post.image_file_id)
-                await bot.send_message(chat_id, text=text, parse_mode="HTML")
-        else:
-            await bot.send_message(chat_id, text=text, parse_mode="HTML")
-    except Exception as exc:
-        logger.exception("Не удалось опубликовать пост %s в канал %s", post_id, chat_id)
-        raise PublishError(str(exc)) from exc
+    to_channel = targets in (TARGET_CHANNEL, TARGET_BOTH)
+    to_site = targets in (TARGET_SITE, TARGET_BOTH)
+    if to_site and not settings.site_enabled:
+        if targets == TARGET_SITE:
+            raise PublishError("Публикация на сайт не настроена (нет SITE_NEWS_API_URL/KEY)")
+        to_site = False
+
+    if to_channel:
+        try:
+            await _send_to_channel(bot, post, markdown_to_html(post.display_text))
+        except Exception as exc:
+            logger.exception(
+                "Не удалось опубликовать пост %s в канал %s", post_id, settings.target_channel_id
+            )
+            raise PublishError(str(exc)) from exc
+        logger.info("Пост %s опубликован в канал %s", post_id, settings.target_channel_id)
+
+    if to_site:
+        try:
+            await _send_to_site(post)
+        except Exception as exc:
+            logger.exception("Не удалось отправить пост %s на сайт", post_id)
+            if not to_channel:
+                raise PublishError(str(exc)) from exc
+            await run_sync(repository.set_status, post_id, "draft")
+            return [TARGET_SITE]
+        logger.info("Пост %s отправлен на сайт", post_id)
 
     now = datetime.now(timezone.utc).isoformat()
-    post = await run_sync(repository.set_published, post_id, now)
-    logger.info("Пост %s опубликован в канал %s", post_id, chat_id)
-
-    await _notify_website(post)
+    await run_sync(repository.set_published, post_id, now)
+    return []

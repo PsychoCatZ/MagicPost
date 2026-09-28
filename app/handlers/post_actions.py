@@ -6,7 +6,11 @@ from app.ai.base import AIError
 from app.ai.content_service import ContentService
 from app.database import repository
 from app.database.db import run_sync
-from app.keyboards.post_actions import confirm_delete_keyboard, confirm_publish_keyboard
+from app.keyboards.post_actions import (
+    confirm_delete_keyboard,
+    publish_target_keyboard,
+    target_name,
+)
 from app.services.publishing import PublishError, publish_post
 from app.services.rendering import render_post_preview
 from app.states.generation import PostEditing
@@ -36,25 +40,39 @@ async def ask_publish_confirm(callback: CallbackQuery) -> None:
     post_id = _post_id(callback.data)
     await callback.answer()
     await callback.message.answer(
-        "Опубликовать пост в канал сейчас?",
-        reply_markup=confirm_publish_keyboard(post_id),
+        "Куда опубликовать пост сейчас?",
+        reply_markup=publish_target_keyboard(post_id, "post:publish_to"),
     )
 
 
-@router.callback_query(F.data.startswith("post:publish_confirm:"))
+@router.callback_query(F.data.startswith("post:publish_to:"))
 async def do_publish(callback: CallbackQuery) -> None:
-    post_id = _post_id(callback.data)
+    _, _, target, raw_id = callback.data.split(":")
+    post_id = int(raw_id)
+    await callback.answer()
     try:
-        await publish_post(callback.bot, post_id)
+        failed = await publish_post(callback.bot, post_id, target)
     except PublishError:
-        await callback.answer()
+        if target == "site":
+            text = (
+                "⚠️ Не удалось отправить пост на сайт. Проверьте, что сайт доступен, "
+                "и попробуйте снова."
+            )
+        else:
+            text = (
+                "⚠️ Не удалось опубликовать пост. Проверьте, что бот всё ещё "
+                "администратор канала с правом публикации, и попробуйте снова."
+            )
+        await callback.message.answer(text)
+        return
+    if failed:
         await callback.message.answer(
-            "⚠️ Не удалось опубликовать пост. Проверьте, что бот всё ещё "
-            "администратор канала с правом публикации, и попробуйте снова."
+            "✅ Пост опубликован в канале.\n"
+            "⚠️ На сайт отправить не удалось. Пост оставлен в черновиках — "
+            "откройте его и выберите «На сайт», когда сайт будет доступен."
         )
         return
-    await callback.answer()
-    await callback.message.answer("✅ Пост опубликован.")
+    await callback.message.answer(f"✅ Пост опубликован {target_name(target)}.")
 
 
 @router.callback_query(F.data.startswith("post:regenerate:"))

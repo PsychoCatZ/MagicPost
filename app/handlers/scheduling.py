@@ -8,6 +8,7 @@ from aiogram.types import CallbackQuery, Message
 from app.config import settings
 from app.database import repository
 from app.database.db import run_sync
+from app.keyboards.post_actions import publish_target_keyboard, target_name
 from app.keyboards.scheduled import confirm_schedule_keyboard, scheduled_list_keyboard
 from app.keyboards.texts import MenuText
 from app.services.scheduler import PostScheduler
@@ -21,19 +22,33 @@ def _post_id(callback_data: str) -> int:
 
 
 @router.callback_query(F.data.startswith("post:schedule:"))
-async def start_schedule(callback: CallbackQuery, state: FSMContext) -> None:
+async def start_schedule(callback: CallbackQuery) -> None:
     post_id = _post_id(callback.data)
-    await state.set_state(Scheduling.waiting_date)
-    await state.update_data(post_id=post_id)
     await callback.answer()
-    await callback.message.answer("Введите дату публикации в формате ДД.ММ.ГГГГ\nНапример: 24.09.2026")
+    await callback.message.answer(
+        "Куда опубликовать пост по расписанию?",
+        reply_markup=publish_target_keyboard(post_id, "post:sched_to"),
+    )
+
+
+@router.callback_query(F.data.startswith("post:sched_to:"))
+async def choose_schedule_target(callback: CallbackQuery, state: FSMContext) -> None:
+    _, _, target, raw_id = callback.data.split(":")
+    await state.set_state(Scheduling.waiting_date)
+    await state.update_data(post_id=int(raw_id), targets=target)
+    await callback.answer()
+    await callback.message.answer(
+        f"Публикуем {target_name(target)}.\n"
+        "Введите дату публикации в формате ДД.ММ.ГГГГ\nНапример: 24.09.2026"
+    )
 
 
 @router.callback_query(F.data.startswith("sched:change:"))
 async def change_schedule(callback: CallbackQuery, state: FSMContext) -> None:
     post_id = _post_id(callback.data)
+    post = await run_sync(repository.get_post, post_id)
     await state.set_state(Scheduling.waiting_date)
-    await state.update_data(post_id=post_id)
+    await state.update_data(post_id=post_id, targets=post.targets if post else "both")
     await callback.answer()
     await callback.message.answer("Введите новую дату публикации в формате ДД.ММ.ГГГГ")
 
@@ -74,7 +89,8 @@ async def receive_time(message: Message, state: FSMContext) -> None:
     post_id = data["post_id"]
     pretty = run_at.strftime("%d.%m.%Y %H:%M")
     await message.answer(
-        f"Запланировать публикацию на {pretty} ({settings.app_timezone})?",
+        f"Запланировать публикацию {target_name(data['targets'])} "
+        f"на {pretty} ({settings.app_timezone})?",
         reply_markup=confirm_schedule_keyboard(post_id),
     )
 
@@ -88,12 +104,13 @@ async def confirm_schedule(
     run_at = datetime.fromisoformat(data["run_at"])
     await state.clear()
 
-    await run_sync(repository.set_scheduled, post_id, run_at.isoformat())
+    targets = data["targets"]
+    await run_sync(repository.set_scheduled, post_id, run_at.isoformat(), targets)
     scheduler.schedule_post(post_id, run_at)
 
     await callback.answer()
     pretty = run_at.strftime("%d.%m.%Y %H:%M")
-    await callback.message.answer(f"🕒 Публикация запланирована на {pretty}.")
+    await callback.message.answer(f"🕒 Публикация {target_name(targets)} запланирована на {pretty}.")
 
 
 @router.message(F.text == MenuText.SCHEDULED)

@@ -18,10 +18,16 @@ class Post:
     updated_at: str
     published_at: str | None
     scheduled_at: str | None
+    publish_targets: str | None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Post":
         return cls(**{key: row[key] for key in row.keys()})
+
+    @property
+    def targets(self) -> str:
+        """'channel', 'site' or 'both'. Posts scheduled before targets existed went to both."""
+        return self.publish_targets or "both"
 
     @property
     def display_text(self) -> str:

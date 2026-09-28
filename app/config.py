@@ -46,6 +46,10 @@ class Settings:
     site_news_api_url: str | None
     site_news_api_key: str | None
 
+    @property
+    def site_enabled(self) -> bool:
+        return bool(self.site_news_api_url and self.site_news_api_key)
+
 
 def load_settings() -> Settings:
     return Settings(

@@ -1,6 +1,7 @@
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from app.config import settings
 from app.database.models import Post
 
 
@@ -21,11 +22,26 @@ def post_preview_keyboard(post: Post) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def confirm_publish_keyboard(post_id: int) -> InlineKeyboardMarkup:
+TARGET_LABELS = {
+    "channel": "📢 В канал",
+    "site": "🌐 На сайт",
+    "both": "📢🌐 В канал и на сайт",
+}
+
+
+def target_name(target: str) -> str:
+    return {"channel": "в канал", "site": "на сайт", "both": "в канал и на сайт"}[target]
+
+
+def publish_target_keyboard(post_id: int, action: str) -> InlineKeyboardMarkup:
+    """`action` is the callback prefix: 'post:publish_to' or 'post:sched_to'."""
     b = InlineKeyboardBuilder()
-    b.button(text="✅ Да", callback_data=f"post:publish_confirm:{post_id}")
+    b.button(text=TARGET_LABELS["channel"], callback_data=f"{action}:channel:{post_id}")
+    if settings.site_enabled:
+        b.button(text=TARGET_LABELS["site"], callback_data=f"{action}:site:{post_id}")
+        b.button(text=TARGET_LABELS["both"], callback_data=f"{action}:both:{post_id}")
     b.button(text="◀️ Назад", callback_data=f"post:open:{post_id}")
-    b.adjust(2)
+    b.adjust(1)
     return b.as_markup()
 
 

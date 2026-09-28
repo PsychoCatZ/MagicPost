@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS posts (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     published_at TEXT,
-    scheduled_at TEXT
+    scheduled_at TEXT,
+    publish_targets TEXT
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -56,6 +57,9 @@ def init_db() -> None:
     conn = get_connection()
     try:
         conn.executescript(_SCHEMA)
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(posts)")}
+        if "publish_targets" not in columns:
+            conn.execute("ALTER TABLE posts ADD COLUMN publish_targets TEXT")
         conn.commit()
     finally:
         conn.close()
